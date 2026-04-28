@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Google Authenticator → 标准 TOTP (Base32)</title>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdn.staticfile.org/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+    body{max-width:700px;margin:30px auto;padding:20px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f8f9fa;color:#333;position:relative;min-height:100vh}
+    .watermark{position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:9999;overflow:hidden}
+    .watermark-text{position:absolute;white-space:nowrap;opacity:0.08;font-size:18px;font-weight:600;transform:rotate(-30deg);color:#d93025}
+    .container{background:#fff;padding:25px;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,0.08);position:relative;z-index:10}
+    .lang-switch{position:absolute;top:20px;right:20px}
+    .lang-switch button{width:auto;padding:8px 14px;font-size:13px;background:#f0f0f0;color:#333;border-radius:8px;font-weight:500}
+    .lang-switch button:hover{background:#e0e0e0;transform:none}
+    h2{text-align:center;color:#1a73e8;margin:0 0 15px 0;font-size:22px;font-weight:600}
+    .tips{background:#f1f8ff;padding:14px;border-radius:10px;font-size:14px;margin-bottom:20px;color:#444;line-height:1.6;border:1px solid #e3f2fd}
+    .tips b{color:#1a73e8}
+    button{width:100%;padding:14px;background:#1a73e8;color:#fff;border:none;border-radius:10px;font-size:17px;font-weight:600;cursor:pointer;transition:0.2s}
+    button:hover{background:#1557b0;transform:translateY(-1px)}
+    #file{display:none}
+    .card-list{margin-top:25px}
+    .card{display:flex;align-items:center;background:#fff;border:1px solid #f0f0f0;border-radius:14px;padding:18px;margin-bottom:14px;transition:0.2s}
+    .card:hover{box-shadow:0 3px 10px rgba(0,0,0,0.06);border-color:#e8e8e8}
+    .info{flex:1;padding-right:18px;display:flex;flex-direction:column;gap:10px}
+    .issuer-name{font-size:16px;font-weight:600;color:#333}
+    .secret-display{font-size:11px;color:#999;font-family:monospace;word-break:break-all;margin:0;background:#f8f9fa;padding:6px 10px;border-radius:6px;display:inline-block;width:fit-content}
+    .code-wrapper{display:flex;align-items:center;gap:16px;margin-top:4px}
+    .code-display{font-size:32px;font-family:monospace;font-weight:600;color:#1a73e8;letter-spacing:3px;transition:color 0.2s}
+    .code-display.warning{color:#d93025}
+    .code-pulse{animation:pulse 0.25s ease-out}
+    @keyframes pulse{
+        0%{transform:scale(1)}
+        50%{transform:scale(1.08)}
+        100%{transform:scale(1)}
+    }
+    .qr-container{text-align:center;min-width:130px}
+    .qr-container p{font-size:12px;margin-top:8px;color:#999}
+    .card-timer{width:50px;height:50px;flex-shrink:0;position:relative}
+    .card-timer svg{transform:rotate(-90deg);width:50px;height:50px}
+    .card-timer-bg{fill:none;stroke:#f0f0f0;stroke-width:2}
+    .card-timer-progress{fill:none;stroke:#1a73e8;stroke-width:2.5;stroke-linecap:round;transition:stroke-dashoffset 0.3s ease, stroke 0.3s ease}
+    .card-timer-text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:13px;font-weight:600;color:#666;font-family:monospace}
+    canvas, img { display: inline-block; }
+</style>
+</head>
+<body>
+
+<div class="watermark" id="watermark"></div>
+
+<div class="container">
+    <div class="lang-switch">
+        <button onclick="switchLang('zh')">中文</button>
+        <button onclick="switchLang('en')">English</button>
+    </div>
+    <h2 class="lang-zh">🔐 Google Authenticator 转 TOTP</h2>
+    <h2 class="lang-en" style="display:none">🔐 Google Authenticator to TOTP</h2>
+    <div class="tips lang-zh">
+        💡 <b>使用说明：</b><br>
+        1. 在 Google Authenticator 点击“导出账号”，截取那个大型二维码。<br>
+        2. 点击下方按钮上传截图，网页会解析出所有账号。<br>
+        3. <b>可以直接查看验证码，或者用其他支持 TOTP 的应用扫描二维码导入。</b>
+    </div>
+    <div class="tips lang-en" style="display:none">
+        💡 <b>How to use:</b><br>
+        1. In Google Authenticator, tap "Export accounts" and take a screenshot of the large QR code.<br>
+        2. Click the button below to upload the screenshot, and the page will parse all your accounts.<br>
+        3. <b>You can view the codes directly, or scan the QR codes with any other TOTP app to import.</b>
+    </div>
+    <div class="tips lang-zh" style="background:#e8f5e9;border-color:#c8e6c9">
+        🔒 <b>安全说明：</b>所有解析仅在您的浏览器本地完成，不会有任何联网操作，您的数据绝对安全，请放心使用！
+    </div>
+    <div class="tips lang-en" style="display:none;background:#e8f5e9;border-color:#c8e6c9">
+        🔒 <b>Security Note:</b> All parsing happens locally in your browser, no network requests are made. Your data is completely safe and private!
+    </div>
+    
+    <button class="lang-zh" onclick="document.getElementById('file').click()">上传 Google 导出二维码</button>
+    <button class="lang-en" style="display:none" onclick="document.getElementById('file').click()">Upload Google Export QR Code</button>
+    <input type="file" id="file" accept="image/*">
+
+    <div id="result" class="card-list"></div>
+    
+    <div style="text-align:center;margin-top:25px;color:#999;font-size:13px">
+        <a href="https://github.com/black-coffee-mix/GoogleMfa-To-Totp" target="_blank" style="color:#1a73e8;text-decoration:none">
+            <span class="lang-zh">项目地址</span>
+            <span class="lang-en" style="display:none">Project on GitHub</span>
+        </a>
+    </div>
+</div>
+
+<script>
+let globalTimers = [];
+let currentLang = 'zh';
+
+function switchLang(lang) {
+    currentLang = lang;
+    document.querySelectorAll('.lang-zh').forEach(el => el.style.display = lang === 'zh' ? '' : 'none');
+    document.querySelectorAll('.lang-en').forEach(el => el.style.display = lang === 'en' ? '' : 'none');
+    localStorage.setItem('lang', lang);
+    createWatermark();
+}
+
+function initLang() {
+    const savedLang = localStorage.getItem('lang');
+    if (savedLang) {
+        switchLang(savedLang);
+    } else {
+        const browserLang = navigator.language || navigator.userLanguage;
+        switchLang(browserLang.startsWith('zh') ? 'zh' : 'en');
+    }
+    createWatermark();
+}
+
+function createWatermark() {
+    const watermark = document.getElementById('watermark');
+    watermark.innerHTML = '';
+    
+    const textZh = '⚠️ 请勿将二维码、密钥或验证码发送给任何人';
+    const textEn = '⚠️ DO NOT share QR codes, secrets, or verification codes with anyone';
+    const text = currentLang === 'zh' ? textZh : textEn;
+    
+    const cols = 8;
+    const rows = 15;
+    const xStep = 300;
+    const yStep = 120;
+    
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            const span = document.createElement('span');
+            span.className = 'watermark-text';
+            span.textContent = text;
+            span.style.left = (c * xStep - 200) + 'px';
+            span.style.top = (r * yStep - 100) + 'px';
+            watermark.appendChild(span);
+        }
+    }
+}
+
+// --- Protobuf 解析核心 (修复遗漏BUG) ---
+function parseMigration(uri) {
+    try {
+        const params = new URLSearchParams(uri.split('?')[1]);
+        const data = decodeURIComponent(params.get('data'));
+        const b64 = data.replace(/-/g, '+').replace(/_/g, '/');
+        const binStr = atob(b64.padEnd(b64.length + (4 - b64.length % 4) % 4, '='));
+        const bin = new Uint8Array(binStr.length);
+        for (let i = 0; i < binStr.length; i++) bin[i] = binStr.charCodeAt(i);
+
+        const accounts = [];
+        let o = 0;
+        const readVarint = () => {
+            let n = 0, s = 0;
+            while (o < bin.length) {
+                const b = bin[o++];
+                n |= (b & 0x7F) << s;
+                if ((b & 0x80) === 0) return n;
+                s += 7;
+            }
+            return n;
+        };
+        const decoder = new TextDecoder();
+
+        while (o < bin.length) {
+            const tag = readVarint();
+            if ((tag >> 3) !== 1) {
+                const t = tag & 7;
+                if (t === 0) readVarint(); else if (t === 2) o += readVarint(); else if (t === 5) o += 4; else if (t === 1) o += 8;
+                continue;
+            }
+            const len = readVarint();
+            const end = o + len;
+            let secret = '', name = '', issuer = '';
+            while (o < end) {
+                const it = readVarint();
+                const ifield = it >> 3, iw = it & 7;
+                if (iw === 0) readVarint();
+                else if (iw === 2) {
+                    const l = readVarint();
+                    const d = bin.subarray(o, o + l); o += l;
+                    if (ifield === 1) secret = b32(d);
+                    else if (ifield === 2) name = decoder.decode(d);
+                    else if (ifield === 3) issuer = decoder.decode(d);
+                }
+            }
+            accounts.push({ secret, name, issuer });
+        }
+        return accounts;
+    } catch(e) { 
+        const msg = currentLang === 'zh' 
+            ? "解析失败，请确保截图清晰且为谷歌导出二维码" 
+            : "Failed to parse. Please make sure the screenshot is clear and is a Google Authenticator export QR code.";
+        alert(msg);
+        return []; 
+    }
+}
+
+function b32(buf) {
+    const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let o = '', b = 0, v = 0;
+    for (let i = 0; i < buf.length; i++) {
+        v = (v << 8) | buf[i]; b += 8;
+        while (b >= 5) { b -= 5; o += c[(v >> b) & 31]; }
+    }
+    if (b > 0) o += c[(v << (5 - b)) & 31];
+    return o;
+}
+
+// --- TOTP 计算核心 ---
+async function totp(secret) {
+    const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let b = 0, v = 0, arr = [];
+    const cleanSecret = secret.toUpperCase().replace(/[^A-Z2-7]/g, '');
+    for (const ch of cleanSecret) {
+        v = (v << 5) | c.indexOf(ch); b += 5;
+        if (b >= 8) { b -= 8; arr.push((v >> b) & 0xff); }
+    }
+    const cnt = Math.floor(Date.now() / 1000 / 30);
+    const buf = new Uint8Array(8);
+    new DataView(buf.buffer).setBigUint64(0, BigInt(cnt), false);
+    try {
+        const key = await crypto.subtle.importKey('raw', new Uint8Array(arr), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+        const hmac = new Uint8Array(await crypto.subtle.sign('HMAC', key, buf));
+        const off = hmac[hmac.length - 1] & 0xf;
+        const n = ((hmac[off] & 0x7f) << 24) | (hmac[off + 1] << 16) | (hmac[off + 2] << 8) | hmac[off + 3];
+        return (n % 1000000).toString().padStart(6, '0');
+    } catch(e) { return "ERROR"; }
+}
+
+let lastCodes = {};
+
+function updateCountdown() {
+    const remaining = 30 - Math.floor((Date.now() / 1000) % 30);
+    const percent = remaining / 30;
+    const circumference = 2 * Math.PI * 21;
+    const offset = circumference * (1 - percent);
+
+    document.querySelectorAll('.card-timer-progress').forEach(progress => {
+        progress.style.strokeDasharray = circumference;
+        progress.style.strokeDashoffset = offset;
+        progress.style.stroke = remaining <= 5 ? '#d93025' : '#1a73e8';
+    });
+
+    document.querySelectorAll('.card-timer-text').forEach(text => {
+        text.innerText = remaining;
+    });
+}
+
+document.getElementById('file').onchange = e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const img = new Image();
+    img.src = URL.createObjectURL(f);
+    img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = img.width; canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        const qr = jsQR(ctx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height);
+        if (!qr) { 
+            const msg = currentLang === 'zh' 
+                ? '未检测到二维码' 
+                : 'QR code not detected';
+            alert(msg); 
+            return; 
+        }
+        render(parseMigration(qr.data));
+    };
+};
+
+function render(list) {
+    globalTimers.forEach(clearInterval);
+    globalTimers = [];
+    const dom = document.getElementById('result');
+    dom.innerHTML = "";
+
+    globalTimers.push(setInterval(updateCountdown, 1000));
+
+    list.forEach((item, i) => {
+        const sIssuer = (item.issuer || "Authenticator").trim();
+        const sAccount = (item.name || "MyAccount").trim();
+        
+        const otpURI = `otpauth://totp/${encodeURIComponent(sIssuer)}:${encodeURIComponent(sAccount)}?secret=${item.secret}&issuer=${encodeURIComponent(sIssuer)}`;
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+            <div class="info">
+                <div class="issuer-name">${sIssuer}: ${sAccount}</div>
+                <div class="secret-display lang-zh">密钥: ${item.secret}</div>
+                <div class="secret-display lang-en" style="display:none">Secret: ${item.secret}</div>
+                <div class="code-wrapper">
+                    <div class="code-display" id="c${i}">------</div>
+                    <div class="card-timer">
+                        <svg>
+                            <circle class="card-timer-bg" cx="25" cy="25" r="21"></circle>
+                            <circle class="card-timer-progress" cx="25" cy="25" r="21"></circle>
+                        </svg>
+                        <div class="card-timer-text">30</div>
+                    </div>
+                </div>
+            </div>
+            <div class="qr-container">
+                <div id="qr${i}"></div>
+                <p class="lang-zh">扫描导入</p>
+                <p class="lang-en" style="display:none">Scan to import</p>
+            </div>
+        `;
+        dom.appendChild(card);
+
+        const cardLangZh = card.querySelectorAll('.lang-zh');
+        const cardLangEn = card.querySelectorAll('.lang-en');
+        cardLangZh.forEach(el => el.style.display = currentLang === 'zh' ? '' : 'none');
+        cardLangEn.forEach(el => el.style.display = currentLang === 'en' ? '' : 'none');
+
+        new QRCode(document.getElementById(`qr${i}`), {
+            text: otpURI,
+            width: 120,
+            height: 120,
+            correctLevel: QRCode.CorrectLevel.M
+        });
+
+        const update = async () => {
+            const code = await totp(item.secret);
+            const el = document.getElementById(`c${i}`);
+            const remaining = 30 - Math.floor((Date.now() / 1000) % 30);
+            if (el) {
+                const formattedCode = code.slice(0, 3) + ' ' + code.slice(3);
+                const codeChanged = el.innerText !== formattedCode && el.innerText !== '------';
+                const isWarning = remaining <= 5;
+
+                if (isWarning) {
+                    el.classList.add('warning');
+                } else {
+                    el.classList.remove('warning');
+                }
+
+                if (codeChanged || isWarning) {
+                    el.classList.remove('code-pulse');
+                    void el.offsetWidth;
+                    el.classList.add('code-pulse');
+                }
+                el.innerText = formattedCode;
+            }
+        };
+        update();
+        globalTimers.push(setInterval(update, 1000));
+    });
+}
+
+initLang();
+</script>
+</body>
+</html>
